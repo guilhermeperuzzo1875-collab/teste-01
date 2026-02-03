@@ -1,0 +1,611 @@
+local AntiScreenShare = {
+    Enabled = true,
+    RefreshRate = 0.1,
+    ProtectedGuis = {},
+    LastCheck = 0
+}
+
+local function ApplyAntiScreenShare(guiObject)
+    if not AntiScreenShare.Enabled then return end
+    
+    -- ProteÃ§Ã£o MÃ©todo 1: CoreGui + DisplayOrder mÃ¡ximo
+    pcall(function()
+        if guiObject:IsA("ScreenGui") then
+            guiObject.IgnoreGuiInset = true
+            guiObject.DisplayOrder = 999999
+            guiObject.ResetOnSpawn = false
+        end
+        table.insert(AntiScreenShare.ProtectedGuis, guiObject)
+    end)
+    
+    -- ProteÃ§Ã£o MÃ©todo 2: DetecÃ§Ã£o de captura por FPS
+    pcall(function()
+        local function checkForCapture()
+            local fps = workspace:GetRealPhysicsFPS()
+            if fps and fps < 30 then
+                return true
+            end
+            return false
+        end
+        
+        task.spawn(function()
+            while AntiScreenShare.Enabled and guiObject and guiObject.Parent do
+                local currentTime = tick()
+                if currentTime - AntiScreenShare.LastCheck >= AntiScreenShare.RefreshRate then
+                    AntiScreenShare.LastCheck = currentTime
+                    
+                    if checkForCapture() then
+                        -- Ocultar temporariamente
+                        for _, gui in pairs(AntiScreenShare.ProtectedGuis) do
+                            if gui and gui.Parent then
+                                gui.Enabled = false
+                            end
+                        end
+                        task.wait(1)
+                        -- Restaurar
+                        for _, gui in pairs(AntiScreenShare.ProtectedGuis) do
+                            if gui and gui.Parent then
+                                gui.Enabled = true
+                            end
+                        end
+                    end
+                end
+                task.wait(AntiScreenShare.RefreshRate)
+            end
+        end)
+    end)
+    
+    -- ProteÃ§Ã£o MÃ©todo 3: Micro-jitter anti-captura
+    pcall(function()
+        if guiObject:IsA("ScreenGui") then
+            task.spawn(function()
+                while AntiScreenShare.Enabled and guiObject and guiObject.Parent do
+                    for _, child in pairs(guiObject:GetDescendants()) do
+                        if child:IsA("GuiObject") and child.Name == "MainFrame" then
+                            local originalPos = child.Position
+                            local jitter = math.random(-1, 1) * 0.0001
+                            child.Position = UDim2.new(
+                                originalPos.X.Scale + jitter,
+                                originalPos.X.Offset,
+                                originalPos.Y.Scale + jitter,
+                                originalPos.Y.Offset
+                            )
+                            task.wait(0.016)
+                            child.Position = originalPos
+                        end
+                    end
+                    task.wait(0.016)
+                end
+            end)
+        end
+    end)
+end
+
+local function ProtectGuiFromCapture(screenGui)
+    pcall(function()
+        -- Tentar colocar no CoreGui (mais seguro)
+        screenGui.Parent = game:GetService("CoreGui")
+        screenGui.ResetOnSpawn = false
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        screenGui.DisplayOrder = 999999
+        screenGui.IgnoreGuiInset = true
+        ApplyAntiScreenShare(screenGui)
+    end)
+end
+
+-- =============================================
+-- ANTI-DETECTION BYPASS COMPLETO
+-- =============================================
+local function ApplyBypass()
+    print("ðŸ”§ Aplicando bypass anti-detecÃ§Ã£o...")
+    
+    -- ProteÃ§Ã£o contra detecÃ§Ã£o de executor
+    pcall(function()
+        if identifyexecutor then
+            local old_identify = identifyexecutor
+            identifyexecutor = function()
+                return "Unknown", "0.0.0"
+            end
+        end
+        
+        if getexecutorname then
+            getexecutorname = function()
+                return "Unknown"
+            end
+        end
+        
+        if getgenv then
+            local old_getgenv = getgenv
+            getgenv = function()
+                return setmetatable({}, {
+                    __index = function() return nil end,
+                    __newindex = function() end
+                })
+            end
+        end
+    end)
+    
+    -- Hook de metatable completo
+    pcall(function()
+        local mt = getrawmetatable(game)
+        local old_namecall = mt.__namecall
+        local old_index = mt.__index
+        local old_newindex = mt.__newindex
+        
+        setreadonly(mt, false)
+        
+        -- ProteÃ§Ã£o contra Kick
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+            
+            -- Bloquear kick do player
+            if method == "Kick" and self == game.Players.LocalPlayer then
+                return wait(9e9)
+            end
+            
+            -- Bloquear FireServer/InvokeServer suspeitos
+            if method == "FireServer" or method == "InvokeServer" then
+                local remoteName = tostring(self):lower()
+                local blocked = {
+                    "anticheat", "ban", "kick", "report", "log", "detect", 
+                    "flag", "warn", "punish", "analytics", "telemetry"
+                }
+                for _, keyword in pairs(blocked) do
+                    if remoteName:match(keyword) then
+                        return
+                    end
+                end
+            end
+            
+            return old_namecall(self, ...)
+        end)
+        
+        -- ProteÃ§Ã£o contra detecÃ§Ã£o de modificaÃ§Ã£o de valores
+        mt.__index = newcclosure(function(self, key)
+            local value = old_index(self, key)
+            
+            -- Falsificar valores de Humanoid para anti-cheat
+            if self:IsA("Humanoid") then
+                if key == "WalkSpeed" then
+                    if checkcaller and not checkcaller() then
+                        return 16
+                    end
+                elseif key == "JumpPower" or key == "JumpHeight" then
+                    if checkcaller and not checkcaller() then
+                        return 50
+                    end
+                elseif key == "HipHeight" then
+                    if checkcaller and not checkcaller() then
+                        return 0
+                    end
+                end
+            end
+            
+            return value
+        end)
+        
+        mt.__newindex = newcclosure(function(self, key, value)
+            return old_newindex(self, key, value)
+        end)
+        
+        setreadonly(mt, true)
+    end)
+    
+    -- Desabilitar avisos suspeitos
+    pcall(function()
+        local old_warn = warn
+        warn = function(...)
+            local args = {...}
+            local str = table.concat(args, " ")
+            local blocked_warnings = {
+                "GerasHUB", "Executor", "Exploit", "Script", "Cheat", 
+                "Detected", "Suspicious", "Unauthorized"
+            }
+            for _, keyword in pairs(blocked_warnings) do
+                if str:match(keyword) then
+                    return
+                end
+            end
+            return old_warn(...)
+        end
+    end)
+    
+    -- Hook de HttpService para evitar logs
+    pcall(function()
+        local hs = game:GetService("HttpService")
+        if hs then
+            local old_request = hs.RequestAsync
+            hs.RequestAsync = newcclosure(function(self, options)
+                if options and options.Url then
+                    local url = options.Url:lower()
+                    local blocked_urls = {
+                        "analytics", "logging", "telemetry", "tracking",
+                        "webhook", "discord.com/api/webhooks"
+                    }
+                    for _, keyword in pairs(blocked_urls) do
+                        if url:match(keyword) then
+                            return {
+                                Success = false,
+                                StatusCode = 403,
+                                Body = "Blocked"
+                            }
+                        end
+                    end
+                end
+                return old_request(self, options)
+            end)
+        end
+    end)
+    
+    -- ProteÃ§Ã£o contra detecÃ§Ã£o de velocidade nÃ£o natural
+    pcall(function()
+        local function normalizeVelocity()
+            local char = game.Players.LocalPlayer.Character
+            if not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            if root.AssemblyLinearVelocity.Magnitude > 1000 then
+                root.AssemblyLinearVelocity = root.AssemblyLinearVelocity.Unit * 500
+            end
+        end
+        game:GetService("RunService").Heartbeat:Connect(function()
+            pcall(normalizeVelocity)
+        end)
+    end)
+    
+    -- Desabilitar StackTrace
+    pcall(function()
+        debug.traceback = function()
+            return ""
+        end
+    end)
+    
+    print("âœ… Bypass aplicado com sucesso!")
+end
+
+-- Aplicar bypass
+local success, err = pcall(ApplyBypass)
+if not success then
+    warn("âš ï¸ Bypass parcialmente aplicado:", err)
+end
+
+-- =============================================
+-- SERVICES
+-- =============================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local mouse = player:GetMouse()
+
+-- =============================================
+-- PROTEÃ‡ÃƒO ANTI-CRASH
+-- =============================================
+local function safeCall(func, ...)
+    local success, result = pcall(func, ...)
+    if not success then
+        warn("âš ï¸ Erro protegido:", result)
+    end
+    return success, result
+end
+
+-- =============================================
+-- CONFIGURAÃ‡Ã•ES COMPLETAS
+-- =============================================
+local Config = {
+    Aimbot = {
+        Enabled = false,
+        Radius = 120,
+        Smoothness = 0.08,
+        TargetPart = "Head",
+        StickyAim = false,
+        ShowCircle = true,
+        Rainbow = false,
+        SilentAim = false,
+        SilentAimFOV = 150,
+        VisibleCheck = false,
+        TeamCheck = false
+    },
+    ESP = {
+        Enabled = false,
+        ShowName = true,
+        ShowDistance = true,
+        ShowHealth = true,
+        ShowLine = true,
+        ShowBox = false,
+        Rainbow = false,
+        MaxDistance = 800,
+        TextSize = 14,
+        TeamCheck = false
+    },
+    Tools = {
+        TPToPlayer = {
+            Enabled = false,
+            SelectedPlayer = nil,
+            Offset = Vector3.new(0, 0, 3),
+            SafeMode = true,
+            TweenSpeed = 100,
+            CheckpointDistance = 30,
+            SmartCheckpoints = true,
+            FollowMode = false,
+            FollowDistance = 5,
+            FollowUpdateRate = 0.1,
+            AutoRotate = true,
+            AvoidObstacles = true
+        },
+        FlingCar = {
+            Enabled = false,
+            Power = 100,
+            AutoFling = false
+        },
+        NoClip = {
+            Enabled = false
+        },
+        FlyingCar = {
+            Enabled = false,
+            Speed = 50
+        },
+        InfiniteJump = {
+            Enabled = false
+        },
+        WalkSpeed = {
+            Enabled = false,
+            Value = 16
+        },
+        JumpPower = {
+            Enabled = false,
+            Value = 50
+        }
+    },
+    AntiScreenShare = {
+        Enabled = true
+    }
+}
+
+-- =============================================
+-- VARIÃVEIS GLOBAIS
+-- =============================================
+local ESPDrawings = {}
+local FOVCircle
+local LockedTarget = nil
+local SilentAimTarget = nil
+local NoClipConnection = nil
+local GrabbedCar = nil
+local FlingConnection = nil
+local CurrentTeleportTween = nil
+local CarOriginalProperties = {}
+local FollowConnection = nil
+local CurrentFollowPlayer = nil
+local FollowNoClipConnection = nil
+local TPDebugMode = false
+local FlyingCar = nil
+local FlyConnection = nil
+local FlySpeed = 50
+local FlyBodyVelocity = nil
+local FlyBodyGyro = nil
+local InfiniteJumpConnection = nil
+local WalkSpeedConnection = nil
+local JumpPowerConnection = nil
+local FollowLastUpdate = 0
+
+-- =============================================
+-- FUNÃ‡Ã•ES AUXILIARES
+-- =============================================
+function IsEnemy(otherPlayer)
+    if not otherPlayer then return false end
+    if otherPlayer == player then return false end
+    if not otherPlayer:IsA("Player") then return false end
+    
+    -- Team check
+    if Config.Aimbot.TeamCheck or Config.ESP.TeamCheck then
+        if otherPlayer.Team == player.Team then
+            return false
+        end
+    end
+    
+    return true
+end
+
+function GetTargetPart(char)
+    if not char then return nil end
+    
+    local parts = {
+        Head = char:FindFirstChild("Head"),
+        Torso = char:FindFirstChild("HumanoidRootPart") or 
+                char:FindFirstChild("UpperTorso") or 
+                char:FindFirstChild("Torso"),
+        Legs = char:FindFirstChild("LeftUpperLeg") or 
+               char:FindFirstChild("Left Leg")
+    }
+    
+    return parts[Config.Aimbot.TargetPart] or parts.Head
+end
+
+function IsVisible(targetPart)
+    if not Config.Aimbot.VisibleCheck then return true end
+    if not targetPart then return false end
+    
+    local char = player.Character
+    if not char then return false end
+    
+    local origin = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+    if not origin then return false end
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    
+    local result = workspace:Raycast(origin.Position, targetPart.Position - origin.Position, raycastParams)
+    
+    if result then
+        return result.Instance:IsDescendantOf(targetPart.Parent)
+    end
+    
+    return true
+end
+
+function GetClosestTarget()
+    if not Config.Aimbot.Enabled then return nil end
+    
+    local closest, bestDist = nil, math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+    local maxRadius = Config.Aimbot.SilentAim and Config.Aimbot.SilentAimFOV or Config.Aimbot.Radius
+    
+    for _, plr in pairs(Players:GetPlayers()) do
+        if not IsEnemy(plr) then continue end
+        
+        local char = plr.Character
+        if not char then continue end
+        
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        
+        local part = GetTargetPart(char)
+        if not part then continue end
+        
+        if not IsVisible(part) then continue end
+        
+        local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+        
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+        
+        if dist < maxRadius and dist < bestDist then
+            bestDist = dist
+            closest = char
+        end
+    end
+    
+    return closest
+end
+
+-- =============================================
+-- SILENT AIMBOT HOOK
+-- =============================================
+local OldNamecall
+safeCall(function()
+    local mt = getrawmetatable(game)
+    setreadonly(mt, false)
+    
+    OldNamecall = mt.__namecall
+    
+    mt.__namecall = newcclosure(function(...)
+        local args = {...}
+        local self = args[1]
+        local method = getnamecallmethod()
+        
+        if Config.Aimbot.SilentAim and Config.Aimbot.Enabled then
+            if method == "FireServer" or method == "InvokeServer" then
+                if SilentAimTarget then
+                    local part = GetTargetPart(SilentAimTarget)
+                    if part then
+                        for i, arg in pairs(args) do
+                            if typeof(arg) == "Vector3" then
+                                local offset = Vector3.new(
+                                    math.random(-10, 10) / 100,
+                                    math.random(-10, 10) / 100,
+                                    math.random(-10, 10) / 100
+                                )
+                                args[i] = part.Position + offset
+                            elseif typeof(arg) == "CFrame" then
+                                local offset = Vector3.new(
+                                    math.random(-10, 10) / 100,
+                                    math.random(-10, 10) / 100,
+                                    math.random(-10, 10) / 100
+                                )
+                                args[i] = CFrame.new(part.Position + offset)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        return OldNamecall(unpack(args))
+    end)
+    
+    setreadonly(mt, true)
+end)
+
+-- =============================================
+-- SISTEMA DE TELEPORTE INTELIGENTE COMPLETO
+-- =============================================
+local function HasObstacles(startPos, endPos)
+    if not Config.Tools.TPToPlayer.AvoidObstacles then
+        return false
+    end
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {player.Character}
+    
+    local result = workspace:Raycast(startPos, endPos - startPos, raycastParams)
+    return result ~= nil
+end
+
+local function CalculateCheckpoints(startPos, endPos, distance)
+    local checkpoints = {}
+    local checkpointDist = Config.Tools.TPToPlayer.CheckpointDistance
+    
+    if Config.Tools.TPToPlayer.SmartCheckpoints then
+        local numCheckpoints = math.ceil(distance / checkpointDist)
+        numCheckpoints = math.clamp(numCheckpoints, 3, 25)
+        
+        for i = 1, numCheckpoints do
+            local alpha = i / numCheckpoints
+            local checkpointPos = startPos:Lerp(endPos, alpha)
+            
+            -- Adicionar altura a cada 3 checkpoints para evitar obstÃ¡culos
+            if i % 3 == 0 and Config.Tools.TPToPlayer.AvoidObstacles then
+                checkpointPos = checkpointPos + Vector3.new(0, 3, 0)
+            end
+            
+            table.insert(checkpoints, checkpointPos)
+        end
+    else
+        local numCheckpoints = math.clamp(math.floor(distance / checkpointDist), 3, 20)
+        
+        for i = 1, numCheckpoints do
+            local alpha = i / numCheckpoints
+            local checkpointPos = startPos:Lerp(endPos, alpha)
+            table.insert(checkpoints, checkpointPos)
+        end
+    end
+    
+    return checkpoints
+end
+
+local function SafeTeleport(targetPosition, callback)
+    local char = player.Character
+    if not char then 
+        if callback then callback(false, "Character nÃ£o encontrado") end
+        return 
+    end
+    
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then 
+        if callback then callback(false, "HumanoidRootPart nÃ£o encontrado") end
+        return 
+    end
+    
+    -- Cancelar teleporte anterior
+    if CurrentTeleportTween then
+        CurrentTeleportTween:Cancel()
+        CurrentTeleportTween = nil
+    end
+    
+    local startPos = root.CFrame.Position
+    local distance = (targetPosition - startPos).Magnitude
+    
+    -- Teleporte direto para distÃ¢ncias curtas
+    if distance < 10 then
+        root.CFrame = CFrame.new(targetPosition)
+        if callback then callback(true, "Teleporte direto (curta distÃ¢ncia)") end
+        return
+    end
+    
+    -- Mod
